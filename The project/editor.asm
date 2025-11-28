@@ -1,13 +1,5 @@
-; Text Editor - Corrected Version
-; Improvements:
-; - Safe handling of BP and stack
-; - Maintain fileLength variable for write operations
-; - Ensure SI points to end-of-buffer before RefreshScreen
-; - Better checks for INT 21h results
-; - Small fixes to Backspace / Enter handling to keep fileLength consistent
-;
-; Fixes applied: Replaced long conditional jumps (JE) with a short conditional jump
-; followed by a long unconditional jump (JMP) to resolve "Relative jump out of range" errors.
+; Text Editor - Fixed F2 Load to Allow Full Editing
+; Fix: Populate LineStack when loading files so backspace works on loaded content
 
 .model small
 .stack 100h
@@ -69,8 +61,8 @@ main proc far
         JE F1True
         
         CMP AH, 3Ch    ; F2
-        JNE CheckFunctionKeysEnd ; If not F2, continue execution below
-        JMP F2True               ; Long jump to F2True (Fix 1)
+        JNE CheckFunctionKeysEnd
+        JMP F2True
 
     CheckFunctionKeysEnd:
         JMP InputLoop
@@ -78,7 +70,7 @@ main proc far
     CheckASCII:
         CMP AL, 0Dh ; Enter
         JNE CheckEsc
-        JMP EnterTrue ; Long jump to EnterTrue (Fix 2)
+        JMP EnterTrue
 
     CheckEsc:
         CMP AL, 1Bh ; Esc
@@ -86,7 +78,7 @@ main proc far
         
         CMP AL, 08h ; Backspace
         JNE CheckNorm
-        JMP BackSpaceTrue ; Long jump to BackSpaceTrue (Fix 3)
+        JMP BackSpaceTrue
 
     CheckNorm:
         JMP Norm
@@ -106,7 +98,6 @@ main proc far
 
         PRINT_STRING fileSaving
 
-        ; Store length into safe variable already maintained (fileLength)
         ; Create File
         MOV AH, 3Ch
         MOV CX, 0
@@ -129,16 +120,16 @@ main proc far
         JNE F1_Partial_Write
 
     F1_Write_OK:
-        ; 4. Close File
+        ; Close File
         MOV AH, 3Eh
         MOV BX, [fileHandle]
         INT 21h
 
-        ; 5. Restore Editor State
+        ; Restore Editor State
         POP CX
         POP SI
 
-        ; Ensure SI points to end for refresh (it should be already, but safe)
+        ; Ensure SI points to end for refresh
         MOV SI, OFFSET buffer
         ADD SI, [fileLength]
 
@@ -147,7 +138,6 @@ main proc far
         JMP InputLoop
 
     F1_Partial_Write:
-        ; handle partial write: simple error for now
         MOV AH, 3Eh
         MOV BX, [fileHandle]
         INT 21h
@@ -157,18 +147,15 @@ main proc far
         JMP InputLoop
 
     F1_Error_Restore:
-        ; Error happened while SI and CX were pushed. Restore them.
         POP CX
         POP SI
         PRINT_STRING fileError
         JMP InputLoop
 
     ; =================================================================
-    ; == F2: Load Text Function (With Edit Capability)
+    ; == F2: Load Text Function (FIXED - Now Fully Editable)
     ; =================================================================
     F2True:
-        PRINT_STRING fileLoading
-
         ; 1. Open File
         MOV AH, 3Dh
         MOV AL, 00h
@@ -198,38 +185,69 @@ main proc far
         MOV CX, AX
         MOV [fileLength], CX
 
+        ; ---------------------------------------------------------
+        ; NEW: Build LineStack from loaded content
+        ; ---------------------------------------------------------
+        MOV StackTop, 0          ; Reset stack
+        MOV CurrentLineLen, 0    ; Reset current line length
+        
+        ; If file is empty, skip scanning
+        CMP CX, 0
+        JE F2_SkipScan
+        
+        LEA SI, buffer           ; Start from beginning
+        XOR DX, DX               ; DX = current line char count
+        
+    F2_ScanLoop:
+        CMP SI, OFFSET buffer
+        JB F2_ScanDone
+        
+        ; Calculate remaining bytes
+        LEA DI, buffer
+        ADD DI, CX               ; DI = end of buffer
+        CMP SI, DI
+        JAE F2_ScanDone          ; Reached end
+        
+        MOV AL, [SI]
+        INC SI
+        
+        ; Check if this is a newline (LF)
+        CMP AL, 0Ah
+        JE F2_FoundNewline
+        
+        ; Regular character - increment line length
+        INC DX
+        JMP F2_ScanLoop
+        
+    F2_FoundNewline:
+        ; We found a complete line - push its length to stack
+        MOV BL, StackTop
+        CMP BL, 100              ; Check stack overflow
+        JAE F2_StackFull
+        
+        XOR BH, BH
+        MOV LineStack[BX], DL    ; Store line length
+        INC StackTop
+        
+        XOR DX, DX               ; Reset line length counter
+        JMP F2_ScanLoop
+        
+    F2_StackFull:
+        ; Stack full - just continue without tracking more lines
+        JMP F2_ScanLoop
+        
+    F2_ScanDone:
+        ; DX now contains the length of the last line (after last newline or entire file if no newlines)
+        MOV CurrentLineLen, DL
+
+    F2_SkipScan:
         ; Set SI to end of buffer (offset + length)
         LEA SI, buffer
         ADD SI, CX
 
-        ; ---------------------------------------------------------
-        ; Calculate Length of the last line and place cursor
-        ; ---------------------------------------------------------
-        XOR DX, DX ; DX will count the char length
-        DEC SI ; start from last char
-
-    CalcLastLineLoop:
-        CMP SI, OFFSET buffer
-        JB EndCalc
-        MOV AL, [SI]
-        CMP AL, 0Ah ; newline
-        JE EndCalc
-        INC DX
-        DEC SI
-        JMP CalcLastLineLoop
-
-    EndCalc:
-        MOV CurrentLineLen, DL
-        MOV StackTop, 0
-
-        ; After calculation, restore SI to end (offset + length)
-        LEA SI, buffer
-        ADD SI, CX
-
-        ; 6. Refresh Screen
+        ; Refresh Screen
         CALL RefreshScreen
 
-        PRINT_STRING fileLoaded
         JMP InputLoop
 
     F2_Error_Simple:
@@ -242,11 +260,15 @@ main proc far
     EnterTrue:
         ; push current line length on LineStack
         MOV BL, StackTop
+        CMP BL, 100              ; Check stack overflow
+        JAE EnterStackFull
+        
         XOR BH, BH
         MOV AL, CurrentLineLen
         MOV LineStack[BX], AL
         INC StackTop
 
+    EnterStackFull:
         MOV CurrentLineLen, 0
 
         ; append CR LF
@@ -310,14 +332,13 @@ main proc far
         JMP InputLoop
 
     DeleteEnter:
-        ; If StackTop is 0, this enter came from loaded file ? prevent underflow
+        ; Check if StackTop is 0 - now this should rarely happen since we populate stack on load
         CMP StackTop, 0
         JE DeleteEnter_Abort
 
-        ; We are deleting a user-typed Enter (CR/LF). SI currently points AFTER LF, so step back over LF and CR
-        DEC SI ; now points to LF
-        DEC SI ; now points to CR or previous char
-        SUB WORD PTR [fileLength], 2
+        ; Delete CR/LF pair
+        DEC SI
+        DEC WORD PTR [fileLength]
 
         DEC StackTop
         MOV BL, StackTop
@@ -325,11 +346,16 @@ main proc far
         MOV AL, LineStack[BX]
         MOV CurrentLineLen, AL
 
-        ; move cursor up one line and set column
+        ; Refresh screen to show the joined lines
+        PUSH SI
+        CALL RefreshScreen
+        POP SI
+
+        ; move cursor to correct position on previous line
         MOV AH, 03h
         MOV BH, 0
         INT 10h
-        ; DH = row, DL = col ? adjust DH safely
+        ; DH = row, DL = col
         CMP DH, 0
         JE SkipCursorUp
         DEC DH
@@ -343,7 +369,7 @@ main proc far
         JMP InputLoop
 
     DeleteEnter_Abort:
-        ; This line break was not part of typed text (came from loaded file). We abort deletion and restore SI and fileLength.
+        ; Restore state
         INC SI
         INC WORD PTR [fileLength]
         MOV CX, [fileLength]
@@ -404,7 +430,7 @@ main endp
 
         ; Remove '$' (clean up)
         MOV BYTE PTR [SI], ' '
-
+        
         POP SI
         POP AX
         ret
