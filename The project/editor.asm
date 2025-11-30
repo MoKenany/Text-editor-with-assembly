@@ -135,7 +135,7 @@ main proc far
 
         CALL RefreshScreen
         PRINT_STRING fileSaved
-        JMP InputLoop
+        .exit
 
     F1_Partial_Write:
         MOV AH, 3Eh
@@ -356,10 +356,6 @@ main proc far
         MOV BH, 0
         INT 10h
         ; DH = row, DL = col
-        CMP DH, 0
-        JE SkipCursorUp
-        DEC DH
-    SkipCursorUp:
         MOV DL, CurrentLineLen
         MOV AH, 02h
         MOV BH, 0
@@ -430,7 +426,7 @@ main endp
 
         ; Remove '$' (clean up)
         MOV BYTE PTR [SI], ' '
-        
+
         POP SI
         POP AX
         ret

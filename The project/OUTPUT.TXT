@@ -1,9 +1,5 @@
-This is a sample text file used for testing the DOS text editor.
-You can load this file, edit it, add new lines, and then save it again.
+Hello, my name is mohamed, this is a test
+kjjfhsdjk
 
-The editor should keep everything from this original text
-and append anything new that you type afterwards.
 
-NEWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWwww
-
-GOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO
+	
